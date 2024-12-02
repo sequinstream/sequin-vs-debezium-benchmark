@@ -1,0 +1,10 @@
+{
+ "name": "benchmark-debezium-postgresql-connector",
+ "contentType": "ZIP",
+ "location": {
+  "s3Location": {
+    "bucketArn": "arn:aws:s3:::benchmark-debezium-postgresql-connector",
+    "fileKey": "connector.zip"
+  }
+ }
+}

@@ -1,0 +1,9 @@
+/venv
+kafka_stats.csv
+.terraform
+.terraform.lock.hcl
+*.tfstate*
+kafka_stats_*.csv
+.DS_Store
+terraform.tfvars
+

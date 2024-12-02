@@ -1,0 +1,7 @@
+confluent-kafka==2.3.0
+pandas==2.2.1
+numpy==1.26.4
+psycopg2-binary==2.9.9
+python-dateutil==2.8.2
+aws-msk-iam-sasl-signer-python==1.0.1
+boto3==1.35.78
