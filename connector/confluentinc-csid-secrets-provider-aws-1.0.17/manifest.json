@@ -1,0 +1,31 @@
+{
+  "name" : "csid-secrets-provider-aws",
+  "version" : "1.0.17",
+  "title" : "csid-secrets-provider-aws",
+  "description" : "Secrets Provider for Amazon Secrets Manager",
+  "owner" : {
+    "username" : "confluentinc",
+    "name" : "Confluent"
+  },
+  "support" : {
+    "summary" : "Support provided through community involvement."
+  },
+  "features" : {
+    "supported_encodings" : [ "any" ],
+    "single_message_transforms" : true,
+    "confluent_control_center_integration" : true,
+    "kafka_connect_api" : true
+  },
+  "documentation_url" : "https://confluentinc.github.io/csid-secrets-providers/guides/plugins/aws_secrets",
+  "source_url" : "https://github.com/confluentinc/csid-secrets-providers/tree/main/aws",
+  "docker_image" : {
+    "namespace" : "confluentinc",
+    "name" : "cp-kafka-connect"
+  },
+  "license" : [ {
+    "name" : "Confluent Community License",
+    "url" : "https://www.confluent.io/confluent-community-license"
+  } ],
+  "component_types" : [ "converter" ],
+  "release_date" : "2024-05-13"
+}
