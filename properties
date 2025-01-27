@@ -1,4 +1,0 @@
-key.converter=org.apache.kafka.connect.storage.StringConverter
-value.converter=org.apache.kafka.connect.storage.StringConverter
-config.providers.secretManager.class=com.github.jcustenborder.kafka.config.aws.SecretsMconfig.providers=secretManager
-config.providers.secretManager.param.aws.region=us-west-2
