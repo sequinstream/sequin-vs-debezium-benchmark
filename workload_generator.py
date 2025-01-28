@@ -21,6 +21,9 @@ class WorkloadGenerator:
         self.table_name = table_name
         self.cur = self.conn.cursor()
         self.target_bytes = target_bytes
+        self.partition_count = 16
+        self.total_rows = 600_000
+        self.rows_per_partition = self.total_rows // self.partition_count
         
     def truncate_table(self):
         """Truncate the table"""
@@ -28,9 +31,13 @@ class WorkloadGenerator:
         self.conn.commit()
         
     def setup_table(self):
-        """Create the table if it doesn't exist and truncate it"""
+        """Drop and recreate the partitioned table"""
+        # Drop existing table if it exists
+        self.cur.execute(f"DROP TABLE IF EXISTS {self.table_name}")
+        
+        # Create new partitioned table
         self.cur.execute(f"""
-            CREATE TABLE IF NOT EXISTS {self.table_name} (
+            CREATE TABLE {self.table_name} (
                 id SERIAL PRIMARY KEY,
                 string_field TEXT,
                 numeric_field DECIMAL,
@@ -38,11 +45,55 @@ class WorkloadGenerator:
                 json_field JSONB,
                 inserted_at TIMESTAMP DEFAULT NOW(),
                 updated_at TIMESTAMP DEFAULT NOW()
-            )
+            ) PARTITION BY RANGE (id)
         """)
-        self.conn.commit()
-        self.truncate_table()
         
+        # Create partitions with inclusive ranges
+        for i in range(self.partition_count):
+            start_range, end_range = self.get_partition_range(i)
+            partition_name = f"{self.table_name}_p{i}"
+            
+            self.cur.execute(f"""
+                CREATE TABLE {partition_name}
+                PARTITION OF {self.table_name}
+                FOR VALUES FROM ({start_range}) TO ({end_range})
+            """)
+        
+        self.conn.commit()
+
+    def get_partition_range(self, partition_num):
+        start_range = partition_num * self.rows_per_partition + 1
+        end_range = start_range + self.rows_per_partition
+        return start_range, end_range
+        
+    def load_initial_data(self):
+        """Load initial data during setup"""
+        print("\nLoading initial data...")
+        batch_size = 10000  # Use larger batches for initial load
+        loaded_rows = 0
+        
+        while loaded_rows < self.total_rows:
+            records = [self.generate_record() for _ in range(batch_size)]
+            args_str = ','.join(self.cur.mogrify(
+                "(%(string_field)s, %(numeric_field)s, %(timestamp_field)s, %(json_field)s)",
+                record
+            ).decode('utf-8') for record in records)
+            
+            self.cur.execute(f"""
+                INSERT INTO {self.table_name} 
+                (string_field, numeric_field, timestamp_field, json_field)
+                VALUES {args_str}
+            """)
+            
+            loaded_rows += batch_size
+            self.conn.commit()
+            
+            # Print progress
+            progress = (loaded_rows / self.total_rows) * 100
+            print(f"\rProgress: {progress:.2f}% ({loaded_rows:,} / {self.total_rows:,} rows)", end='')
+        
+        print("\nInitial data load complete!")
+
     def generate_record(self):
         """Generate a single record with random data"""
         # Calculate approximate static field sizes
@@ -78,13 +129,15 @@ class WorkloadGenerator:
         """)
         return self.cur.fetchall()
     
-    def update_batch(self, ids):
-        """Update all records in the batch"""
-        if not ids:
-            return
-        
+    def get_random_ids_in_range(self, start_range, end_range):
+        """Generate a batch of random IDs within the specified range"""
+        return [random.randint(start_range, end_range - 1) for _ in range(self.batch_size)]
+
+    def update_batch_in_range(self, start_range, end_range):
+        """Update a batch of random records within the specified ID range"""
+        ids = self.get_random_ids_in_range(start_range, end_range)
         new_data = self.generate_record()
-        id_list = ','.join(str(id[0]) for id in ids)
+        id_list = ','.join(str(id) for id in ids)
         self.cur.execute(f"""
             UPDATE {self.table_name}
             SET string_field = %(string_field)s,
@@ -94,6 +147,7 @@ class WorkloadGenerator:
                 updated_at = NOW()
             WHERE id IN ({id_list})
         """, new_data)
+        return self.cur.rowcount
     
     def delete_batch(self, ids):
         """Delete all records in the batch"""
@@ -107,10 +161,24 @@ class WorkloadGenerator:
         
         return []  # Return empty list since we deleted everything
     
-    def run(self, duration_seconds=60):
-        """Run the workload for a specified duration"""
-        try:
+    def run(self, duration_seconds=60, setup_mode=False, partition=None):
+        """Run the workload generator"""
+        if setup_mode:
+            print("Running setup mode...")
             self.setup_table()
+            self.load_initial_data()
+            return
+
+        if partition is None:
+            raise ValueError("Partition number must be specified")
+
+        if partition < 0 or partition >= self.partition_count:
+            raise ValueError(f"Partition must be between 0 and {self.partition_count-1}")
+
+        start_range, end_range = self.get_partition_range(partition)
+        print(f"\nUpdating partition {partition} (ID range: {start_range:,} to {end_range:,})")
+            
+        try:
             start_time = time.time()
             total_operations = 0
             total_bytes = 0
@@ -120,25 +188,13 @@ class WorkloadGenerator:
             print("Running workload generator...\n")
             
             while time.time() - start_time < duration_seconds:
-                # Insert batch
-                new_ids = self.insert_batch()
-                
-                # Update all records in batch
-                self.update_batch(new_ids)
-                
-                # Delete all records in batch
-                self.delete_batch(new_ids)
-                
+                # Update batch of records in partition
+                updates = self.update_batch_in_range(start_range, end_range)
                 self.conn.commit()
                 
-                # Calculate operations and data volumes
-                inserts = len(new_ids)
-                updates = len(new_ids)
-                deletes = len(new_ids)
-                batch_operations = inserts + updates + deletes
-                batch_bytes = (inserts + updates + deletes) * self.target_bytes
-                
-                total_operations += batch_operations
+                # Calculate metrics
+                batch_bytes = updates * self.target_bytes
+                total_operations += updates
                 total_bytes += batch_bytes
                 
                 # Calculate elapsed time and throughput
@@ -147,12 +203,12 @@ class WorkloadGenerator:
                 overall_elapsed = current_time - start_time
                 
                 # Calculate throughput metrics
-                batch_throughput = batch_operations / batch_elapsed
-                overall_throughput = total_operations / overall_elapsed
+                batch_throughput = updates / batch_elapsed if batch_elapsed > 0 else 0
+                overall_throughput = total_operations / overall_elapsed if overall_elapsed > 0 else 0
                 
                 # Calculate data throughput
-                batch_data_throughput = batch_bytes / batch_elapsed
-                overall_data_throughput = total_bytes / overall_elapsed
+                batch_data_throughput = batch_bytes / batch_elapsed if batch_elapsed > 0 else 0
+                overall_data_throughput = total_bytes / overall_elapsed if overall_elapsed > 0 else 0
                 
                 # Format data throughput for display
                 def format_data_rate(bytes_per_sec):
@@ -173,12 +229,11 @@ class WorkloadGenerator:
                 # Update status with progress bar and throughput metrics
                 status = (
                     f"\r[{bar}] {percentage:0.1f}%\n"
-                    f"Batch: {inserts}i/{updates}u/{deletes}d | "
-                    f"Batch time: {batch_elapsed:.2f}s | "
-                    f"Batch throughput: {batch_throughput:.2f} ops/s | "
+                    f"Updates: {updates} | "
+                    f"Batch throughput: {batch_throughput:.2f} updates/s | "
                     f"Data: {format_data_rate(batch_data_throughput)}\n"
-                    f"Total operations: {total_operations} | "
-                    f"Overall throughput: {overall_throughput:.2f} ops/s | "
+                    f"Total updates: {total_operations} | "
+                    f"Overall throughput: {overall_throughput:.2f} updates/s | "
                     f"Avg Data: {format_data_rate(overall_data_throughput)}"
                 )
                 print(f"{status}\033[2A", end='', flush=True)
@@ -195,15 +250,17 @@ class WorkloadGenerator:
             final_throughput = total_operations / total_elapsed
             final_data_throughput = total_bytes / total_elapsed
             print(f"\nFinal Statistics:")
-            print(f"Total operations: {total_operations}")
+            print(f"Total updates: {total_operations}")
             print(f"Total data processed: {total_bytes/1_000_000:.2f} MB")
             print(f"Total time: {total_elapsed:.2f}s")
-            print(f"Average throughput: {final_throughput:.2f} ops/s")
+            print(f"Average throughput: {final_throughput:.2f} updates/s")
             print(f"Average data throughput: {format_data_rate(final_data_throughput)}")
             self.conn.close()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Generate database workload')
+    parser.add_argument('--setup', action='store_true',
+                      help='Run in setup mode to create and load initial data')
     parser.add_argument('--batch-size', type=int, default=100,
                       help='Number of records per batch (default: 100)')
     parser.add_argument('--interval', type=float, default=1.0,
@@ -224,6 +281,8 @@ if __name__ == "__main__":
                       help='Table name (default: benchmark_records)')
     parser.add_argument('--byte-size', type=int, default=100,
                       help='Target size in bytes for each row (default: 100)')
+    parser.add_argument('--partition', type=int,
+                      help='Partition number to update (0-15)')
     
     args = parser.parse_args()
     
@@ -238,4 +297,4 @@ if __name__ == "__main__":
         port=args.port,
         target_bytes=args.byte_size
     )
-    generator.run(duration_seconds=args.duration) 
+    generator.run(duration_seconds=args.duration, setup_mode=args.setup, partition=args.partition) 

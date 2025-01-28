@@ -84,8 +84,7 @@ resource "aws_ecs_task_definition" "benchmark_sequin" {
   network_mode          = "host"
 
   requires_compatibilities = ["EC2"]
-  memory                   = 61440
-  cpu                      = 10240
+  memory                   = 716800
 
   execution_role_arn = aws_iam_role.ecs_task_execution_role.arn
 
