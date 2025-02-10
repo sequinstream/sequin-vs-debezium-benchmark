@@ -79,7 +79,7 @@ And setup the load server for load generation:
 ```
 make scp-all
 make ssh-load
-sudo yum install pip
+sudo yum install -y pip
 pip install -r requirements.txt
 ```
 
@@ -106,7 +106,11 @@ tar -xzf kafka_2.12-3.9.0.tgz
 echo 'export PATH=$PATH:~/kafka/kafka_2.12-3.9.0/bin' >> ~/.bashrc
 source ~/.bashrc
 
-# You may need to increase java heap size
-export KAFKA_HEAP_OPTS="-Xms256m -Xmx1g"
-kafka-topics.sh --list --bootstrap-server b-1.benchmarkkafka.5lridc.c10.kafka.us-west-2.amazonaws.com:9098
+[Follow these instructions to install AWS MSK tooling](https://docs.aws.amazon.com/msk/latest/developerguide/create-topic.html)
+
+# Install pip and requirements
+sudo yum install -y pip
+pip install -r requirements.txt
+
+
 ```

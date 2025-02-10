@@ -49,9 +49,9 @@ class KafkaStatsCollector:
         self.last_committed_offsets = {}
         
         self.latencies = deque(maxlen=10000)  # Rolling window of latencies
-        self.replication_latencies = deque(maxlen=10000)  # New: Rolling window for replication latencies
-        self.delivery_latencies = deque(maxlen=10000)    # New: Rolling window for delivery latencies
-        self.throughput_window = deque(maxlen=10000)  # Rolling window for throughput
+        self.replication_latencies = deque(maxlen=100000)  # New: Rolling window for replication latencies
+        self.delivery_latencies = deque(maxlen=100000)    # New: Rolling window for delivery latencies
+        self.throughput_window = deque(maxlen=100000)  # Rolling window for throughput
         self.stats_file = 'kafka_stats.csv'
         self.last_stats_time = time.time()
         self.stats_interval = 10  # Calculate stats every 10 seconds

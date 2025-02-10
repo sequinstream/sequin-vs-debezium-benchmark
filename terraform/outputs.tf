@@ -1,26 +1,9 @@
-output "postgres_endpoint" {
-  value = aws_db_instance.postgres.endpoint
+output "pg_sequin_endpoint" {
+  value = aws_db_instance.postgres_sequin.endpoint
 }
 
-output "pg_hostname" {
-  value = aws_db_instance.postgres.address
-}
-
-output "pg_database" {
-  value = aws_db_instance.postgres.db_name
-}
-
-output "pg_port" {
-  value = aws_db_instance.postgres.port
-}
-
-output "pg_username" {
-  value = aws_db_instance.postgres.username
-}
-
-output "pg_password" {
-  value     = aws_db_instance.postgres.password
-  sensitive = true
+output "pg_load_endpoint" {
+  value = aws_db_instance.postgres_load.endpoint
 }
 
 output "kafka_bootstrap_brokers_tls" {

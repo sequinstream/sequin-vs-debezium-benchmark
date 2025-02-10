@@ -15,7 +15,7 @@ data "aws_ami" "amazon_linux_2023" {
 
 resource "aws_instance" "load_generator" {
   ami           = data.aws_ami.amazon_linux_2023.id
-  instance_type = "t3.medium"
+  instance_type = "t3.xlarge"
   key_name      = aws_key_pair.benchmark.key_name
 
   subnet_id                   = module.vpc.public_subnets[0]

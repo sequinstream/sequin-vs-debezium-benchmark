@@ -32,15 +32,15 @@ locals {
         },
         {
           name  = "PG_HOSTNAME"
-          value = aws_db_instance.postgres.address
+          value = aws_db_instance.postgres_sequin.address
         },
         {
           name  = "PG_DATABASE"
-          value = aws_db_instance.postgres.db_name
+          value = aws_db_instance.postgres_sequin.db_name
         },
         {
           name  = "PG_PORT"
-          value = tostring(aws_db_instance.postgres.port)
+          value = tostring(aws_db_instance.postgres_sequin.port)
         },
         {
           name  = "PG_SSL"
