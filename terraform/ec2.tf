@@ -15,7 +15,7 @@ data "aws_ami" "amazon_linux_2023" {
 
 resource "aws_instance" "load_generator" {
   ami           = data.aws_ami.amazon_linux_2023.id
-  instance_type = "t3.medium"
+  instance_type = "t3.xlarge"
   key_name      = aws_key_pair.benchmark.key_name
 
   subnet_id                   = module.vpc.public_subnets[0]
@@ -41,7 +41,7 @@ resource "aws_instance" "stats_server" {
   associate_public_ip_address = true
 
   root_block_device {
-    volume_size = 20 # GB
+    volume_size = 30 # GB
     volume_type = "gp3"
     encrypted   = true
   }

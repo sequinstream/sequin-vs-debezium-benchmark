@@ -11,7 +11,7 @@ data "aws_ami" "ecs_optimized" {
 resource "aws_launch_template" "ecs" {
   name_prefix   = "ecs-template"
   image_id      = data.aws_ami.ecs_optimized.id
-  instance_type = "m8g.48xlarge"
+  instance_type = "m8g.8xlarge"
   key_name      = aws_key_pair.benchmark.key_name
 
   network_interfaces {

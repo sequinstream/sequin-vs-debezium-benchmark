@@ -4,12 +4,12 @@ resource "aws_msk_cluster" "kafka" {
   number_of_broker_nodes = 3
 
   broker_node_group_info {
-    instance_type   = "kafka.t3.small"
+    instance_type   = "kafka.m7g.large"
     client_subnets  = module.vpc.private_subnets
     security_groups = [aws_security_group.kafka.id]
     storage_info {
       ebs_storage_info {
-        volume_size = 100
+        volume_size = 400
       }
     }
     connectivity_info {
@@ -30,8 +30,6 @@ resource "aws_msk_cluster" "kafka" {
     sasl {
       iam = true
     }
-
-    tls {}
   }
 
   configuration_info {

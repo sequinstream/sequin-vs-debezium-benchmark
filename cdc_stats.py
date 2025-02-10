@@ -48,10 +48,23 @@ class KafkaStatsCollector:
         self.last_processed_offsets = {}
         self.last_committed_offsets = {}
         
-        self.latencies = deque(maxlen=10000)  # Rolling window of latencies
-        self.replication_latencies = deque(maxlen=10000)  # New: Rolling window for replication latencies
-        self.delivery_latencies = deque(maxlen=10000)    # New: Rolling window for delivery latencies
-        self.throughput_window = deque(maxlen=10000)  # Rolling window for throughput
+        # Replace deques with numpy arrays and add batch processing
+        self.batch_size = 10000
+        self.latencies = np.zeros(100000)
+        self.latency_idx = 0
+        self.message_batch = []
+        self.last_batch_process_time = time.time()
+        self.batch_interval = 0.1  # Process batch every 100ms
+        
+        # Remove unused deques
+        # self.replication_latencies = deque(maxlen=100000)
+        # self.delivery_latencies = deque(maxlen=100000)
+        # self.throughput_window = deque(maxlen=100000)
+        
+        # Use numpy array for throughput tracking
+        # self.throughput_times = np.zeros(100000)
+        # self.throughput_idx = 0
+        
         self.stats_file = 'kafka_stats.csv'
         self.last_stats_time = time.time()
         self.stats_interval = 10  # Calculate stats every 10 seconds
@@ -60,11 +73,15 @@ class KafkaStatsCollector:
         with open(self.stats_file, 'w', newline='') as f:
             writer = csv.writer(f)
             writer.writerow(['timestamp', 'time_elapsed_ms', 'avg_latency_ms', 'p50_latency_ms', 
-                           'p95_latency_ms', 'p99_latency_ms', 'throughput_msgs_per_sec',
-                           'avg_replication_latency_ms', 'avg_delivery_latency_ms'])  # New columns
+                           'p95_latency_ms', 'p99_latency_ms', 'throughput_msgs_per_sec'])
 
         self.source = source  # Add source tracking
         self.start_time = time.time() * 1000  # Store start time in milliseconds
+
+        # Add message counter for accurate throughput
+        self.message_count = 0
+        self.last_message_count = 0
+        self.last_throughput_time = time.time()
 
     def get_consumer_lag(self):
         # Get topic partition metadata
@@ -154,42 +171,59 @@ class KafkaStatsCollector:
             return None
 
     def calculate_latency(self, message):
-        parsed_data = self.parse_message(message)
-        if parsed_data:
-            self.latencies.append(parsed_data['latency'])
-            self.throughput_window.append(time.time())
+        """Batch process messages for better performance"""
+        self.message_batch.append(message)
+        current_time = time.time()
+        
+        # Process batch if size threshold or time threshold is met
+        if (len(self.message_batch) >= self.batch_size or 
+            current_time - self.last_batch_process_time >= self.batch_interval):
+            
+            for msg in self.message_batch:
+                parsed_data = self.parse_message(msg)
+                if parsed_data:
+                    # Use circular buffer pattern with numpy arrays
+                    self.latencies[self.latency_idx] = parsed_data['latency']
+                    self.latency_idx = (self.latency_idx + 1) % len(self.latencies)
+                    self.message_count += 1
+            
+            self.message_batch = []
+            self.last_batch_process_time = current_time
 
     def calculate_and_save_stats(self):
         current_time = time.time()
         
         if current_time - self.last_stats_time >= self.stats_interval:
-            # Add lag calculation
             consumer_lag = self.get_consumer_lag()
             
-            if len(self.latencies) > 0:
-                latencies_array = np.array(self.latencies)
+            # Only calculate stats if we have data
+            if self.latency_idx > 0:
+                # Use only the filled portion of the arrays
+                active_latencies = self.latencies[:self.latency_idx]
                 
                 # Calculate percentiles
-                p99 = np.percentile(latencies_array, 99)
-                avg_latency = np.mean(latencies_array)
+                p99 = np.percentile(active_latencies, 99)
+                avg_latency = np.mean(active_latencies)
                 
-                # Calculate throughput (messages per second)
-                recent_times = np.array([t for t in self.throughput_window 
-                                       if t > current_time - self.stats_interval])
-                throughput = len(recent_times) / (max(recent_times) - min(recent_times)) if len(recent_times) > 1 else 0
+                # Calculate throughput using message counter
+                time_diff = current_time - self.last_throughput_time
+                message_diff = self.message_count - self.last_message_count
+                throughput = message_diff / time_diff if time_diff > 0 else 0
+                
+                # Update last values for next calculation
+                self.last_message_count = self.message_count
+                self.last_throughput_time = current_time
 
-                # Save full stats to CSV as before
+                # Save stats to CSV
                 time_elapsed = int((current_time * 1000) - self.start_time)
                 stats_row = [
                     datetime.now().isoformat(),
                     time_elapsed,
                     round(avg_latency, 2),
-                    round(np.percentile(latencies_array, 50), 2),
-                    round(np.percentile(latencies_array, 95), 2),
+                    round(np.percentile(active_latencies, 50), 2),
+                    round(np.percentile(active_latencies, 95), 2),
                     round(p99, 2),
-                    round(throughput, 2),
-                    round(np.mean(np.array(self.replication_latencies)), 2) if self.replication_latencies else '',
-                    round(np.mean(np.array(self.delivery_latencies)), 2) if self.delivery_latencies else ''
+                    round(throughput, 2)
                 ]
                 
                 # Save to CSV
@@ -205,21 +239,25 @@ class KafkaStatsCollector:
     def run(self):
         try:
             while True:
-                msg = self.consumer.poll(1.0)
-                if msg is None:
+                # Increase poll timeout for batch processing
+                messages = self.consumer.consume(timeout=1.0, num_messages=1000)
+                if not messages:
                     continue
-                if msg.error():
-                    if msg.error().code() == KafkaError._PARTITION_EOF:
-                        continue
-                    else:
-                        print(f"Consumer error: {msg.error()}")
-                        break
 
-                try:
-                    self.calculate_latency(msg)
-                    self.calculate_and_save_stats()
-                except Exception as e:
-                    print(f"Error processing message: {e}")
+                for msg in messages:
+                    if msg.error():
+                        if msg.error().code() == KafkaError._PARTITION_EOF:
+                            continue
+                        else:
+                            print(f"Consumer error: {msg.error()}")
+                            return
+
+                    try:
+                        self.calculate_latency(msg)
+                    except Exception as e:
+                        print(f"Error processing message: {e}")
+
+                self.calculate_and_save_stats()
 
         except KeyboardInterrupt:
             print("\nStopping stats collection...")

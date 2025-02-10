@@ -76,3 +76,9 @@ download-stats:
 		ec2-user@$$(terraform output -no-color -raw stats_server_dns):~/kafka_stats.csv \
 		../kafka_stats_$$timestamp.csv && \
 	echo "File downloaded as kafka_stats_$$timestamp.csv"
+
+# Connect to Sequin container shell on ECS instance
+shell:
+	@echo "Connecting to Sequin container shell..."
+	@cd terraform && ssh -t $(SSH_OPTS) -i $(SSH_KEY) ec2-user@$$(terraform output -no-color -json ecs_instance_dns | jq -r '.[0]') \
+		"docker exec -it \$$(docker ps --filter name=sequin --format '{{.ID}}') /bin/bash"
