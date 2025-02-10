@@ -124,10 +124,10 @@ class WorkloadGenerator:
                 new_ids = self.insert_batch()
                 
                 # Update all records in batch
-                self.update_batch(new_ids)
+                # self.update_batch(new_ids)
                 
                 # Delete all records in batch
-                self.delete_batch(new_ids)
+                # self.delete_batch(new_ids)
                 
                 self.conn.commit()
                 

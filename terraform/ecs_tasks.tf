@@ -3,7 +3,7 @@ locals {
   sequin_containers = [
     {
       name  = "sequin"
-      image = "sequin/sequin:benchmark-arm64"
+      image = "sequin/sequin:latest"
       portMappings = [
         {
           containerPort = 7376
@@ -32,15 +32,15 @@ locals {
         },
         {
           name  = "PG_HOSTNAME"
-          value = aws_db_instance.postgres.address
+          value = aws_db_instance.postgres_sequin.address
         },
         {
           name  = "PG_DATABASE"
-          value = aws_db_instance.postgres.db_name
+          value = aws_db_instance.postgres_sequin.db_name
         },
         {
           name  = "PG_PORT"
-          value = tostring(aws_db_instance.postgres.port)
+          value = tostring(aws_db_instance.postgres_sequin.port)
         },
         {
           name  = "PG_SSL"
@@ -84,7 +84,7 @@ resource "aws_ecs_task_definition" "benchmark_sequin" {
   network_mode          = "host"
 
   requires_compatibilities = ["EC2"]
-  memory                   = 716800
+  memory                   = 122880
 
   execution_role_arn = aws_iam_role.ecs_task_execution_role.arn
 

@@ -178,6 +178,13 @@ resource "aws_security_group" "stats_server" {
     cidr_blocks = [var.allowed_ip]
   }
 
+  ingress {
+    from_port   = 7376
+    to_port     = 7376
+    protocol    = "tcp"
+    cidr_blocks = [var.allowed_ip]
+  }
+
   egress {
     from_port   = 0
     to_port     = 0
