@@ -4,7 +4,6 @@ import random
 import time
 from datetime import datetime
 import argparse
-from collections import deque
 
 class WorkloadGenerator:
     def __init__(self, batch_size=100, interval=1.0, table_name="benchmark_records",
@@ -25,10 +24,6 @@ class WorkloadGenerator:
         self.num_columns = num_columns
         self.cached_paddings = self._generate_cached_paddings(1000)  # Generate 1000 unique paddings
         self.padding_index = 0
-        
-        # Maintain separate pools for update and delete operations
-        self.update_pool = deque()
-        self.delete_pool = deque()
         
     def _generate_cached_paddings(self, count):
         """Pre-generate a list of padding strings"""
@@ -66,9 +61,6 @@ class WorkloadGenerator:
         """)
         self.conn.commit()
         self.truncate_table()
-        # Clear the pools
-        self.update_pool.clear()
-        self.delete_pool.clear()
         
     def generate_record(self):
         """Generate a single record with random data"""
@@ -113,17 +105,13 @@ class WorkloadGenerator:
         """)
         return self.cur.fetchall()
     
-    def update_batch(self, batch_size):
-        """Update a batch of records from the update pool"""
-        if not self.update_pool or len(self.update_pool) < batch_size:
-            # Not enough records to update, return empty list
-            return []
-        
-        # Take records from the update pool
-        ids_to_update = [self.update_pool.popleft() for _ in range(batch_size)]
+    def update_batch(self, ids):
+        """Update all records in the batch"""
+        if not ids:
+            return
         
         new_data = self.generate_record()
-        id_list = ','.join(str(id[0]) for id in ids_to_update)
+        id_list = ','.join(str(id[0]) for id in ids)
         
         # Build the SET clause including extra columns
         set_clause = ', '.join([
@@ -140,30 +128,18 @@ class WorkloadGenerator:
             SET {set_clause}
             WHERE id IN ({id_list})
         """, new_data)
-        
-        # Move updated records to the delete pool
-        for id_record in ids_to_update:
-            self.delete_pool.append(id_record)
-            
-        return ids_to_update
     
-    def delete_batch(self, batch_size):
-        """Delete a batch of records from the delete pool"""
-        if not self.delete_pool or len(self.delete_pool) < batch_size:
-            # Not enough records to delete, return empty list
-            return []
-        
-        # Take records from the delete pool
-        ids_to_delete = [self.delete_pool.popleft() for _ in range(batch_size)]
-        
-        id_list = ','.join(str(id[0]) for id in ids_to_delete)
+    def delete_batch(self, ids):
+        """Delete all records in the batch"""
+        if not ids:
+            return
         
         self.cur.execute(f"""
             DELETE FROM {self.table_name}
-            WHERE id IN ({id_list})
+            WHERE id IN ({','.join(str(id[0]) for id in ids)})
         """)
         
-        return ids_to_delete
+        return []  # Return empty list since we deleted everything
     
     def run(self, duration_seconds=60):
         """Run the workload for a specified duration"""
@@ -177,41 +153,22 @@ class WorkloadGenerator:
             print("\033[2J\033[H")  # Clear screen and move cursor to top
             print("Running workload generator...\n")
             
-            # Pre-populate the database with some records for updates and deletes
-            warmup_batches = 3  # Number of batches to pre-populate
-            for _ in range(warmup_batches):
-                new_ids = self.insert_batch()
-                # Add half to update pool, half to delete pool for initial operations
-                half_point = len(new_ids) // 2
-                for i, id_record in enumerate(new_ids):
-                    if i < half_point:
-                        self.update_pool.append(id_record)
-                    else:
-                        self.delete_pool.append(id_record)
-            self.conn.commit()
-            
             while time.time() - start_time < duration_seconds:
-                # Insert new records
+                # Insert batch
                 new_ids = self.insert_batch()
                 
-                # Add new records to the update pool for future updates
-                # for id_record in new_ids:
-                #     self.update_pool.append(id_record)
+                # Update all records in batch
+                self.update_batch(new_ids)
                 
-                # Update records from the update pool
-                # updated_ids = self.update_batch(self.batch_size)
-                
-                # Delete records from the delete pool
-                # deleted_ids = self.delete_batch(self.batch_size)
+                # Delete all records in batch
+                # self.delete_batch(new_ids)
                 
                 self.conn.commit()
                 
                 # Calculate operations and data volumes
                 inserts = len(new_ids)
-                # updates = len(updated_ids)
-                # deletes = len(deleted_ids)
-                updates = 0
-                deletes = 0
+                updates = len(new_ids)
+                deletes = len(new_ids)
                 batch_operations = inserts + updates + deletes
                 batch_bytes = (inserts + updates + deletes) * self.target_bytes
                 
@@ -224,12 +181,12 @@ class WorkloadGenerator:
                 overall_elapsed = current_time - start_time
                 
                 # Calculate throughput metrics
-                batch_throughput = batch_operations / batch_elapsed if batch_elapsed > 0 else 0
-                overall_throughput = total_operations / overall_elapsed if overall_elapsed > 0 else 0
+                batch_throughput = batch_operations / batch_elapsed
+                overall_throughput = total_operations / overall_elapsed
                 
                 # Calculate data throughput
-                batch_data_throughput = batch_bytes / batch_elapsed if batch_elapsed > 0 else 0
-                overall_data_throughput = total_bytes / overall_elapsed if overall_elapsed > 0 else 0
+                batch_data_throughput = batch_bytes / batch_elapsed
+                overall_data_throughput = total_bytes / overall_elapsed
                 
                 # Format data throughput for display
                 def format_data_rate(bytes_per_sec):
@@ -251,7 +208,6 @@ class WorkloadGenerator:
                 status = (
                     f"\r[{bar}] {percentage:0.1f}%\n"
                     f"Batch: {inserts}i/{updates}u/{deletes}d | "
-                    f"Pools: {len(self.update_pool)}u/{len(self.delete_pool)}d | "
                     f"Batch time: {batch_elapsed:.2f}s | "
                     f"Batch throughput: {batch_throughput:.2f} ops/s | "
                     f"Data: {format_data_rate(batch_data_throughput)}\n"
@@ -270,15 +226,14 @@ class WorkloadGenerator:
             print("\n")
             end_time = time.time()
             total_elapsed = end_time - start_time
-            final_throughput = total_operations / total_elapsed if total_elapsed > 0 else 0
-            final_data_throughput = total_bytes / total_elapsed if total_elapsed > 0 else 0
+            final_throughput = total_operations / total_elapsed
+            final_data_throughput = total_bytes / total_elapsed
             print(f"\nFinal Statistics:")
             print(f"Total operations: {total_operations}")
             print(f"Total data processed: {total_bytes/1_000_000:.2f} MB")
             print(f"Total time: {total_elapsed:.2f}s")
             print(f"Average throughput: {final_throughput:.2f} ops/s")
             print(f"Average data throughput: {format_data_rate(final_data_throughput)}")
-            print(f"Remaining in pools: {len(self.update_pool)} updates, {len(self.delete_pool)} deletes")
             self.conn.close()
 
 if __name__ == "__main__":
