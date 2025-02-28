@@ -5,6 +5,15 @@ terraform {
       version = "~> 5.0"
     }
   }
+
+  backend "s3" {
+    bucket  = "sequin-benchmark-terraform-state"
+    key     = "terraform.tfstate"
+    region  = "us-west-2"
+    profile = "dev"
+    # If you want to use DynamoDB for state locking (recommended)
+    # dynamodb_table = "terraform-state-lock"
+  }
 }
 
 provider "aws" {
