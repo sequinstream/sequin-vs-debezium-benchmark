@@ -3,7 +3,7 @@ locals {
   sequin_containers = [
     {
       name  = "sequin"
-      image = "sequin/sequin:latest"
+      image = "sequin/sequin:v0.6.64-alpha.01"
       portMappings = [
         {
           containerPort = 7376
@@ -57,6 +57,10 @@ locals {
         {
           name  = "VAULT_KEY"
           value = "2Sig69bIpuSm2kv0VQfDekET2qy8qUZGI8v3/h3ASiY="
+        },
+        {
+          name  = "MAX_MEMORY_MB"
+          value = "57344"
         }
       ]
       logConfiguration = {
@@ -84,7 +88,7 @@ resource "aws_ecs_task_definition" "benchmark_sequin" {
   network_mode          = "host"
 
   requires_compatibilities = ["EC2"]
-  memory                   = 122880
+  memory                   = 57344
 
   execution_role_arn = aws_iam_role.ecs_task_execution_role.arn
 

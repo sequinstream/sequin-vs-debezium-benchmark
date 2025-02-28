@@ -8,6 +8,7 @@ resource "aws_security_group" "postgres" {
     to_port         = 5432
     protocol        = "tcp"
     security_groups = [aws_security_group.application.id, aws_security_group.load_generator.id, aws_security_group.msk_connect.id]
+    cidr_blocks     = ["172.220.0.0/16"]
   }
 
   egress {
@@ -36,6 +37,7 @@ resource "aws_security_group" "kafka" {
     to_port         = 9092
     protocol        = "tcp"
     security_groups = [aws_security_group.application.id]
+    cidr_blocks     = ["172.220.0.0/16"]
   }
 
   ingress {
@@ -47,6 +49,7 @@ resource "aws_security_group" "kafka" {
       aws_security_group.stats_server.id,
       aws_security_group.msk_connect.id
     ]
+    cidr_blocks = ["172.220.0.0/16"]
   }
 
   ingress {
@@ -58,6 +61,7 @@ resource "aws_security_group" "kafka" {
       aws_security_group.stats_server.id,
       aws_security_group.application.id
     ]
+    cidr_blocks = ["172.220.0.0/16"]
   }
 
   egress {
