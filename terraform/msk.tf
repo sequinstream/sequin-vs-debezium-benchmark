@@ -1,7 +1,7 @@
 resource "aws_msk_cluster" "kafka" {
   cluster_name           = "benchmark-kafka"
   kafka_version          = "3.5.1"
-  number_of_broker_nodes = 3
+  number_of_broker_nodes = 6
 
   broker_node_group_info {
     instance_type   = "kafka.m7g.large"
