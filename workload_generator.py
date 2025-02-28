@@ -8,7 +8,7 @@ import argparse
 class WorkloadGenerator:
     def __init__(self, batch_size=100, interval=1.0, table_name="benchmark_records",
                  dbname="testdb", user="postgres", password="postgres", 
-                 host="localhost", port="5432", target_bytes=100):
+                 host="localhost", port="5432", target_bytes=100, num_columns=1):
         self.conn = psycopg2.connect(
             dbname=dbname,
             user=user,
@@ -21,6 +21,18 @@ class WorkloadGenerator:
         self.table_name = table_name
         self.cur = self.conn.cursor()
         self.target_bytes = target_bytes
+        self.num_columns = num_columns
+        self.cached_paddings = self._generate_cached_paddings(1000)  # Generate 1000 unique paddings
+        self.padding_index = 0
+        
+    def _generate_cached_paddings(self, count):
+        """Pre-generate a list of padding strings"""
+        base_size = 93  # Base row size including headers and fixed fields
+        padding_needed = max(0, self.target_bytes - base_size)
+        return [
+            ''.join(random.choices('abcdefghijklmnopqrstuvwxyz', k=padding_needed))
+            for _ in range(count)
+        ]
         
     def truncate_table(self):
         """Truncate the table"""
@@ -29,15 +41,22 @@ class WorkloadGenerator:
         
     def setup_table(self):
         """Create the table if it doesn't exist and truncate it"""
+        # Generate dynamic columns
+        extra_columns = [f"extra_col_{i} TEXT" for i in range(self.num_columns)]
+        columns_def = ",\n                ".join([
+            "id SERIAL PRIMARY KEY",
+            "string_field TEXT",
+            "numeric_field DECIMAL",
+            "timestamp_field TIMESTAMP WITH TIME ZONE",
+            "json_field JSONB",
+            *extra_columns,
+            "inserted_at TIMESTAMP DEFAULT NOW()",
+            "updated_at TIMESTAMP DEFAULT NOW()"
+        ])
+        
         self.cur.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.table_name} (
-                id SERIAL PRIMARY KEY,
-                string_field TEXT,
-                numeric_field DECIMAL,
-                timestamp_field TIMESTAMP WITH TIME ZONE,
-                json_field JSONB,
-                inserted_at TIMESTAMP DEFAULT NOW(),
-                updated_at TIMESTAMP DEFAULT NOW()
+                {columns_def}
             )
         """)
         self.conn.commit()
@@ -45,14 +64,11 @@ class WorkloadGenerator:
         
     def generate_record(self):
         """Generate a single record with random data"""
-        # Calculate approximate static field sizes
-        base_size = 93  # Base row size including headers and fixed fields
+        padding = self.cached_paddings[self.padding_index]
+        self.padding_index = (self.padding_index + 1) % len(self.cached_paddings)
         
-        # Generate padding to reach target size
-        padding_needed = max(0, self.target_bytes - base_size)
-        padding = ''.join(random.choices('abcdefghijklmnopqrstuvwxyz', k=padding_needed))
-        
-        return {
+        # Base record
+        record = {
             "string_field": f"test-{random.randint(1, 1000)}",
             "numeric_field": round(random.uniform(1, 1000), 2),
             "timestamp_field": datetime.now(),
@@ -61,18 +77,29 @@ class WorkloadGenerator:
                 "padding": padding
             })
         }
+        
+        # Add extra columns
+        for i in range(self.num_columns):
+            record[f"extra_col_{i}"] = f"extra-{random.randint(1, 1000)}"
+            
+        return record
     
     def insert_batch(self):
         """Insert a batch of records"""
         records = [self.generate_record() for _ in range(self.batch_size)]
+        
+        # Build the column list and value placeholders
+        columns = ["string_field", "numeric_field", "timestamp_field", "json_field"] + [f"extra_col_{i}" for i in range(self.num_columns)]
+        placeholders = [f"%({col})s" for col in columns]
+        
         args_str = ','.join(self.cur.mogrify(
-            "(%(string_field)s, %(numeric_field)s, %(timestamp_field)s, %(json_field)s)",
+            f"({', '.join(placeholders)})",
             record
         ).decode('utf-8') for record in records)
         
         self.cur.execute(f"""
             INSERT INTO {self.table_name} 
-            (string_field, numeric_field, timestamp_field, json_field)
+            ({', '.join(columns)})
             VALUES {args_str}
             RETURNING id
         """)
@@ -85,13 +112,20 @@ class WorkloadGenerator:
         
         new_data = self.generate_record()
         id_list = ','.join(str(id[0]) for id in ids)
+        
+        # Build the SET clause including extra columns
+        set_clause = ', '.join([
+            "string_field = %(string_field)s",
+            "numeric_field = %(numeric_field)s",
+            "timestamp_field = %(timestamp_field)s",
+            "json_field = %(json_field)s"
+        ] + [
+            f"extra_col_{i} = %(extra_col_{i})s" for i in range(self.num_columns)
+        ] + ["updated_at = NOW()"])
+        
         self.cur.execute(f"""
             UPDATE {self.table_name}
-            SET string_field = %(string_field)s,
-                numeric_field = %(numeric_field)s,
-                timestamp_field = %(timestamp_field)s,
-                json_field = %(json_field)s,
-                updated_at = NOW()
+            SET {set_clause}
             WHERE id IN ({id_list})
         """, new_data)
     
@@ -124,7 +158,7 @@ class WorkloadGenerator:
                 new_ids = self.insert_batch()
                 
                 # Update all records in batch
-                # self.update_batch(new_ids)
+                self.update_batch(new_ids)
                 
                 # Delete all records in batch
                 # self.delete_batch(new_ids)
@@ -224,6 +258,8 @@ if __name__ == "__main__":
                       help='Table name (default: benchmark_records)')
     parser.add_argument('--byte-size', type=int, default=100,
                       help='Target size in bytes for each row (default: 100)')
+    parser.add_argument('--columns', type=int, default=1,
+                      help='Number of additional columns (default: 1)')
     
     args = parser.parse_args()
     
@@ -236,6 +272,7 @@ if __name__ == "__main__":
         password=args.password,
         host=args.host,
         port=args.port,
-        target_bytes=args.byte_size
+        target_bytes=args.byte_size,
+        num_columns=args.columns
     )
     generator.run(duration_seconds=args.duration) 
