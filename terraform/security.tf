@@ -113,6 +113,33 @@ resource "aws_security_group" "application" {
     security_groups = [aws_security_group.load_generator.id]
   }
 
+  # Datadog APM port
+  ingress {
+    from_port   = 8126
+    to_port     = 8126
+    protocol    = "tcp"
+    self        = true
+    description = "Datadog APM TCP"
+  }
+
+  # Datadog StatsD port
+  ingress {
+    from_port   = 8125
+    to_port     = 8125
+    protocol    = "udp"
+    self        = true
+    description = "Datadog StatsD UDP"
+  }
+
+  # Datadog OTLP port
+  ingress {
+    from_port   = 4318
+    to_port     = 4318
+    protocol    = "tcp"
+    self        = true
+    description = "Datadog OTLP TCP"
+  }
+
   ingress {
     from_port   = 22
     to_port     = 22

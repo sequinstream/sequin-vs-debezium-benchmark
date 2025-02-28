@@ -1,6 +1,11 @@
 resource "aws_ecs_cluster" "main" {
   name = "benchmark-sequin-cluster"
   tags = var.common_tags
+
+  setting {
+    name  = "containerInsights"
+    value = "disabled"
+  }
 }
 
 # Create the service using the selected platform
@@ -46,4 +51,21 @@ resource "aws_ecs_cluster_capacity_providers" "cluster_capacity" {
     capacity_provider = aws_ecs_capacity_provider.ec2.name # Reference the name from the resource
     weight            = 100
   }
+}
+
+# Create Datadog agent service as a daemon service
+resource "aws_ecs_service" "datadog_agent" {
+  name            = "benchmark-datadog-agent"
+  cluster         = aws_ecs_cluster.main.id
+  task_definition = aws_ecs_task_definition.datadog_agent.arn
+
+  # Explicitly set launch type to EC2 instead of using capacity providers
+  launch_type = "EC2"
+
+  # Use DAEMON scheduling strategy to ensure one agent per EC2 instance
+  scheduling_strategy = "DAEMON"
+
+  # No need for desired_count with DAEMON strategy
+
+  tags = var.common_tags
 }

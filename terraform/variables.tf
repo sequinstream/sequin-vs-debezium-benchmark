@@ -57,3 +57,8 @@ variable "allowed_ip" {
   description = "IP address allowed for SSH and management access (CIDR notation)"
   type        = string
 }
+
+variable "datadog_api_key" {
+  description = "Datadog API key"
+  type        = string
+}
