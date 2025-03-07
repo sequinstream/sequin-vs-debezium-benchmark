@@ -3,7 +3,7 @@ locals {
   sequin_containers = [
     {
       name  = "sequin"
-      image = "sequin/sequin:v0.6.65-alpha.04"
+      image = "sequin/sequin:v0.6.67-alpha.01"
       portMappings = [
         {
           containerPort = 7376
