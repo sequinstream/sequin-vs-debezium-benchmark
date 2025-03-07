@@ -11,7 +11,7 @@ from aws_msk_iam_sasl_signer import MSKAuthTokenProvider
 import re
 
 class KafkaStatsCollector:
-    def __init__(self, bootstrap_servers, topic, use_iam=False, source='debezium'):
+    def __init__(self, bootstrap_servers, topic, use_iam=False, source='debezium', sample_ratio=0.1):
         # Common consumer configs
         consumer_config = {
             'bootstrap.servers': ','.join(bootstrap_servers),
@@ -49,21 +49,8 @@ class KafkaStatsCollector:
         self.last_committed_offsets = {}
         
         # Replace deques with numpy arrays and add batch processing
-        self.batch_size = 10000
         self.latencies = np.zeros(100000)
         self.latency_idx = 0
-        self.message_batch = []
-        self.last_batch_process_time = time.time()
-        self.batch_interval = 0.1  # Process batch every 100ms
-        
-        # Remove unused deques
-        # self.replication_latencies = deque(maxlen=100000)
-        # self.delivery_latencies = deque(maxlen=100000)
-        # self.throughput_window = deque(maxlen=100000)
-        
-        # Use numpy array for throughput tracking
-        # self.throughput_times = np.zeros(100000)
-        # self.throughput_idx = 0
         
         self.stats_file = 'kafka_stats.csv'
         self.last_stats_time = time.time()
@@ -73,15 +60,21 @@ class KafkaStatsCollector:
         with open(self.stats_file, 'w', newline='') as f:
             writer = csv.writer(f)
             writer.writerow(['timestamp', 'time_elapsed_ms', 'avg_latency_ms', 'p50_latency_ms', 
-                           'p95_latency_ms', 'p99_latency_ms', 'throughput_msgs_per_sec'])
+                           'p95_latency_ms', 'p99_latency_ms', 'throughput_msgs_per_sec', 'bytes_per_second'])
 
         self.source = source  # Add source tracking
         self.start_time = time.time() * 1000  # Store start time in milliseconds
 
-        # Add message counter for accurate throughput
+        # Add message and bytes counters for accurate throughput
         self.message_count = 0
+        self.bytes_count = 0
         self.last_message_count = 0
+        self.last_bytes_count = 0
         self.last_throughput_time = time.time()
+
+        # Add sampling ratio
+        self.sample_ratio = sample_ratio
+        self.sampling_counter = 0
 
     def get_consumer_lag(self):
         # Get topic partition metadata
@@ -171,24 +164,22 @@ class KafkaStatsCollector:
             return None
 
     def calculate_latency(self, message):
-        """Batch process messages for better performance"""
-        self.message_batch.append(message)
-        current_time = time.time()
-        
-        # Process batch if size threshold or time threshold is met
-        if (len(self.message_batch) >= self.batch_size or 
-            current_time - self.last_batch_process_time >= self.batch_interval):
+        # Only process messages based on sampling ratio
+        self.sampling_counter += 1
+        if self.sampling_counter % int(1/self.sample_ratio) != 0:
+            return
+
+        parsed_data = self.parse_message(message)
+        if parsed_data:
+            # Use circular buffer pattern with numpy arrays
+            self.latencies[self.latency_idx] = parsed_data['latency']
+            self.latency_idx = (self.latency_idx + 1) % len(self.latencies)
+            # Adjust message count based on sampling ratio
+            self.message_count += int(1/self.sample_ratio)
+            # Track message size in bytes (also adjusted for sampling)
+            if message.value():
+                self.bytes_count += len(message.value()) * int(1/self.sample_ratio)
             
-            for msg in self.message_batch:
-                parsed_data = self.parse_message(msg)
-                if parsed_data:
-                    # Use circular buffer pattern with numpy arrays
-                    self.latencies[self.latency_idx] = parsed_data['latency']
-                    self.latency_idx = (self.latency_idx + 1) % len(self.latencies)
-                    self.message_count += 1
-            
-            self.message_batch = []
-            self.last_batch_process_time = current_time
 
     def calculate_and_save_stats(self):
         current_time = time.time()
@@ -210,8 +201,13 @@ class KafkaStatsCollector:
                 message_diff = self.message_count - self.last_message_count
                 throughput = message_diff / time_diff if time_diff > 0 else 0
                 
+                # Calculate bytes per second
+                bytes_diff = self.bytes_count - self.last_bytes_count
+                bytes_per_second = bytes_diff / time_diff if time_diff > 0 else 0
+                
                 # Update last values for next calculation
                 self.last_message_count = self.message_count
+                self.last_bytes_count = self.bytes_count
                 self.last_throughput_time = current_time
 
                 # Save stats to CSV
@@ -223,7 +219,8 @@ class KafkaStatsCollector:
                     round(np.percentile(active_latencies, 50), 2),
                     round(np.percentile(active_latencies, 95), 2),
                     round(p99, 2),
-                    round(throughput, 2)
+                    round(throughput, 2),
+                    round(bytes_per_second, 2)
                 ]
                 
                 # Save to CSV
@@ -232,15 +229,14 @@ class KafkaStatsCollector:
                     writer.writerow(stats_row)
                 
                 # Print simplified stats
-                print(f"Throughput: {throughput:>6.1f} msg/s | Latency avg: {avg_latency:>6.1f}ms p99: {p99:>6.1f}ms | Lag: {consumer_lag:>6d}")
+                print(f"Throughput: {throughput:>6.1f} msg/s ({bytes_per_second/1024/1024:>6.1f} MB/s) | Latency avg: {avg_latency:>6.1f}ms p99: {p99:>6.1f}ms | Lag: {consumer_lag:>6d}")
             
             self.last_stats_time = current_time
 
     def run(self):
         try:
             while True:
-                # Increase poll timeout for batch processing
-                messages = self.consumer.consume(timeout=1.0, num_messages=1000)
+                messages = self.consumer.consume(num_messages=2000)
                 if not messages:
                     continue
 
@@ -276,6 +272,8 @@ if __name__ == "__main__":
                       help='Use IAM authentication for MSK')
     parser.add_argument('--source', type=str, choices=['debezium', 'sequin'], default='debezium',
                       help='Source type of Kafka messages (default: debezium)')
+    parser.add_argument('--sample-ratio', type=float, default=0.1,
+                      help='Ratio of messages to sample (default: 0.1)')
 
     args = parser.parse_args()
     
@@ -285,7 +283,8 @@ if __name__ == "__main__":
         bootstrap_servers=bootstrap_servers,
         topic=args.topic,
         use_iam=args.use_iam,
-        source=args.source  # Add source parameter
+        source=args.source,
+        sample_ratio=args.sample_ratio
     )
     collector.stats_interval = args.stats_interval
     collector.run() 

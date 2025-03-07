@@ -10,6 +10,7 @@ resource "aws_db_instance" "postgres_sequin" {
   password = var.db_password
 
   iam_database_authentication_enabled = false
+  publicly_accessible                 = true
 
   vpc_security_group_ids = [aws_security_group.postgres.id]
   db_subnet_group_name   = aws_db_subnet_group.postgres.name

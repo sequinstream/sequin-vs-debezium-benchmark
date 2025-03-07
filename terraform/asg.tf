@@ -11,7 +11,7 @@ data "aws_ami" "ecs_optimized" {
 resource "aws_launch_template" "ecs" {
   name_prefix   = "ecs-template"
   image_id      = data.aws_ami.ecs_optimized.id
-  instance_type = "m8g.8xlarge"
+  instance_type = "m8g.12xlarge"
   key_name      = aws_key_pair.benchmark.key_name
 
   network_interfaces {
@@ -40,8 +40,8 @@ resource "aws_launch_template" "ecs" {
 # Auto Scaling Group
 resource "aws_autoscaling_group" "ecs" {
   name                = "benchmark-sequin-ecs-asg"
-  vpc_zone_identifier = [module.vpc.public_subnets[1]] # us-west-2b
-  target_group_arns   = []                             # Add if you need load balancer integration
+  vpc_zone_identifier = module.vpc.public_subnets
+  target_group_arns   = [] # Add if you need load balancer integration
   health_check_type   = "EC2"
   desired_capacity    = 1
   max_size            = 2
