@@ -140,6 +140,15 @@ resource "aws_security_group" "application" {
     description = "Datadog OTLP TCP"
   }
 
+  # EPMD port for Erlang node communication
+  ingress {
+    from_port   = 4369
+    to_port     = 4369
+    protocol    = "tcp"
+    cidr_blocks = [var.allowed_ip]
+    description = "Erlang Port Mapper Daemon (EPMD)"
+  }
+
   ingress {
     from_port   = 22
     to_port     = 22
