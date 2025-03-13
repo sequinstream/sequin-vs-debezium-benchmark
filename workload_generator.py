@@ -42,9 +42,15 @@ class WorkloadGenerator:
         self.padding_index = 0
         self.schema_type = schema_type
         
-        # Maintain separate pools for update and delete operations
-        self.update_pool = deque()
-        self.delete_pool = deque()
+        # Calculate queue sizes based on timing
+        self.update_queue_size = 100000
+        self.delete_queue_size = 200000
+        
+        # Initialize deques with max sizes
+        self.update_pool = deque(maxlen=self.update_queue_size)
+        self.delete_pool = deque(maxlen=self.delete_queue_size)
+        
+        print(f"Initialized with update queue size: {self.update_queue_size}, delete queue size: {self.delete_queue_size}")
         
     def _generate_cached_paddings(self, count):
         """Pre-generate a list of padding strings"""
@@ -290,7 +296,7 @@ class WorkloadGenerator:
             }
     
     def insert_batch(self):
-        """Insert a batch of records"""
+        """Insert a batch of records and distribute IDs to update and delete pools"""
         records = [self.generate_record() for _ in range(self.batch_size)]
         
         # Build the column list and value placeholders
@@ -308,17 +314,26 @@ class WorkloadGenerator:
             VALUES {args_str}
             RETURNING id
         """)
-        return self.cur.fetchall()
+        new_ids = self.cur.fetchall()
+        
+        # Add all IDs to both pools if they're not full
+        for id_record in new_ids:
+            self.update_pool.append(id_record)
+            self.delete_pool.append(id_record)
+                
+        return new_ids
     
     def update_batch(self, batch_size):
-        """Update a batch of records from the update pool"""
-        if not self.update_pool or len(self.update_pool) < batch_size:
-            # Not enough records to update, return empty list
+        """Update a batch of records only if update pool is at capacity"""
+        if len(self.update_pool) < self.update_queue_size:
+            # Pool not at capacity yet, skip updates
             return []
-        
+            
         # Take records from the update pool
-        ids_to_update = [self.update_pool.popleft() for _ in range(batch_size)]
-        
+        ids_to_update = [self.update_pool.popleft() for _ in range(min(batch_size, len(self.update_pool)))]
+        if not ids_to_update:
+            return []
+            
         new_data = self.generate_record()
         id_list = ','.join(str(id[0]) for id in ids_to_update)
         
@@ -360,21 +375,19 @@ class WorkloadGenerator:
             SET {set_clause}
             WHERE id IN ({id_list})
         """, new_data)
-        
-        # Move updated records to the delete pool
-        for id_record in ids_to_update:
-            self.delete_pool.append(id_record)
             
         return ids_to_update
     
     def delete_batch(self, batch_size):
-        """Delete a batch of records from the delete pool"""
-        if not self.delete_pool or len(self.delete_pool) < batch_size:
-            # Not enough records to delete, return empty list
+        """Delete a batch of records only if delete pool is at capacity"""
+        if len(self.delete_pool) < self.delete_queue_size:
+            # Pool not at capacity yet, skip deletes
             return []
         
         # Take records from the delete pool
-        ids_to_delete = [self.delete_pool.popleft() for _ in range(batch_size)]
+        ids_to_delete = [self.delete_pool.popleft() for _ in range(min(batch_size, len(self.delete_pool)))]
+        if not ids_to_delete:
+            return []
         
         id_list = ','.join(str(id[0]) for id in ids_to_delete)
         
@@ -413,10 +426,6 @@ class WorkloadGenerator:
             while time.time() - start_time < duration_seconds:
                 # Insert new records
                 new_ids = self.insert_batch()
-                
-                # Add new records to the update pool for future updates
-                for id_record in new_ids:
-                    self.update_pool.append(id_record)
                 
                 # Update records from the update pool
                 updated_ids = self.update_batch(self.batch_size)
